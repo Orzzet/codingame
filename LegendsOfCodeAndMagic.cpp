@@ -2,6 +2,9 @@
 #include <string>
 #include <utility> #include <vector>
 #include <algorithm>
+#include <sstream>
+#include <iterator>
+#include <unordered_set>
 #include <unordered_map>
 
 using namespace std;
@@ -12,6 +15,8 @@ class Card;
 Player* player1;
 Player* player2;
 Player* players[2];
+
+Card* cardsToPick[3];
 
 void debug(const int& msg){
     cerr << msg << endl;
@@ -51,12 +56,15 @@ public:
     int attack;
     int defense;
     string abilities;
-    int myHealthChange;
-    int opponentHealthChange;
-    int cardDraw;
+    int myHealthChange = 0;
+    int opponentHealthChange = 0;
+    int cardDraw = 0;
+    bool hasGuard = false;
+    bool hasBreakthrough = false;
+    bool hasCharge = false;
 
     Card(int cardNumber, int instanceId, int location, int cardType, int cost, int attack, int defense,
-         string abilities, int myHealthChange, int opponentHealthChange, int cardDraw) :
+         string* abilities, int myHealthChange, int opponentHealthChange, int cardDraw) :
             cardNumber(cardNumber),
             instanceId(instanceId),
             location(location),
@@ -64,16 +72,33 @@ public:
             cost(cost),
             attack(attack),
             defense(defense),
-            abilities(move(
-                    abilities)),
+            abilities(*abilities),
             myHealthChange(
                     myHealthChange),
             opponentHealthChange(
                     opponentHealthChange),
-            cardDraw(cardDraw) {}
+            cardDraw(cardDraw) {
+        for(char& c: *abilities){
+            if(c == 'B'){
+                this->hasBreakthrough = true;
+            }else if (c == 'G'){
+                this->hasGuard = true;
+            }else if (c == 'C'){
+                this->hasCharge = true;
+            } 
+        }
+    }
 
     bool operator < (const Card & other) const{
         return this->instanceId < other.instanceId;
+    }
+
+    int getValue() const{
+        return attack + defense - 2 * cost;
+    }
+
+    void takeDamage(int amount){
+        this->defense -= amount;
     }
 };
 
@@ -110,16 +135,103 @@ public:
 
     void addCardToBoard(Card* card){
         this->cardsInBoard.insert({card->instanceId, card});
+
     }
 
     void removeCardFromBoard(Card* card){
         this->cardsInBoard.erase(card->instanceId);
     }
+
+    void destroyCardInBoard(int instanceId){
+        cardsInBoard.erase(instanceId);
+    }
 };
 
+// Given a creature, the best attack it can do ignoring allied creatures.
+int bestAttack(Card* attackingCreature, Player* oppositePlayer){
+    int target = -1;
+    int valueGain = 0;
+    for( const auto& pair : oppositePlayer->cardsInBoard){
+        Card* opCreature = pair.second;
+        if(attackingCreature->attack >= opCreature->defense && valueGain < opCreature->getValue() - attackingCreature->getValue()){
+            target = opCreature->instanceId;
+            valueGain = opCreature->getValue() - attackingCreature->getValue();
+        }
+        if(opCreature->hasGuard){
+            target = opCreature->instanceId;
+            valueGain = opCreature->getValue() - attackingCreature->getValue();
+            break;
+        }
+    }
 
+    return target;
+}
 
-void initializeState(){
+// Pick betweet 3 cards based on the value of the cards.
+int bestPick(){
+    int maxValue = -100;
+    int id = 0;
+    int cardNo = 0;
+    for(Card* card: cardsToPick){
+        if(card->getValue() > maxValue){
+            id = cardNo;
+            maxValue = card->getValue();
+        }
+        cardNo++;
+    }
+    return id;
+}
+
+unordered_set<Card*> selectCardsToPlay(Player* activePlayer){
+    unordered_set<Card*> cards;
+    int currentMana = activePlayer->mana;
+    int manaCostCheck = currentMana;
+
+    while(currentMana > 0 && manaCostCheck > 0){
+
+        for(const auto& pair: activePlayer->cardsInHand){
+            Card* card = pair.second;
+            if(card->cost == manaCostCheck && currentMana >= card->cost){
+                cards.insert(card);
+                currentMana -= card->cost;
+            }
+        }
+
+        manaCostCheck--;
+    }
+
+    return cards;
+
+}
+
+void playCards(){
+    for(Card* card: selectCardsToPlay(player1)){
+        summon(card->instanceId);
+        cout << ";";
+    }
+}
+
+void attackWIthCreatures(Player* attackingPlayer){
+
+    for(const auto& pair: attackingPlayer->cardsInBoard){
+        Card* card = pair.second;
+        int target = bestAttack(card, player2);
+        attack(card->instanceId, target);
+
+        if(target != -1){
+            Card* attackedCreature = player2->cardsInBoard[target];
+            attackedCreature->takeDamage(card->attack);
+            if(attackedCreature->defense <= 0){
+                player2->destroyCardInBoard(attackedCreature->instanceId);
+            }
+        }
+
+        cout << ";";
+    }
+
+}
+
+void initializeState(int& time){
     for (int i = 0; i < 2; i++) {
         int playerHealth;
         int playerMana;
@@ -149,8 +261,10 @@ void initializeState(){
         int opponentHealthChange;
         int cardDraw;
         cin >> cardNumber >> instanceId >> location >> cardType >> cost >> attack >> defense >> abilities >> myHealthChange >> opponentHealthChange >> cardDraw; cin.ignore();
-        cards[i] = new Card(cardNumber, instanceId, location, cardType, cost, attack, defense, abilities, myHealthChange, opponentHealthChange, cardDraw);
-        if(location == 0){
+        cards[i] = new Card(cardNumber, instanceId, location, cardType, cost, attack, defense, &abilities, myHealthChange, opponentHealthChange, cardDraw);
+        if(time<30){
+            cardsToPick[i] = cards[i];
+        }else if(location == 0){
             player1->addCardToHand(cards[i]);
         }else if(location == 1){
             player1->addCardToBoard(cards[i]);
@@ -163,13 +277,17 @@ void initializeState(){
 
 int main()
 {
-
+    int time = 0;
     // game loop
     while (true) {
-
-        initializeState();
-        pass();
+        initializeState(time);
+        if(time < 30){
+            pick(bestPick());
+        }else{
+            playCards();
+            attackWIthCreatures(player1);
+        }
         end();
-
+        time++;
     }
 }
