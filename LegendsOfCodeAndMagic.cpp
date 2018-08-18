@@ -48,23 +48,47 @@ void end(){
 
 class Card{
 public:
-    int cardNumber;
-    int instanceId;
+    int* cardNumber;
+    int* instanceId;
     int location;
-    int cardType;
-    int cost;
+    int* cardType;
+    int* cost;
     int attack;
     int defense;
-    string abilities;
-    int myHealthChange = 0;
-    int opponentHealthChange = 0;
-    int cardDraw = 0;
+    int* myHealthChange = nullptr;
+    int* opponentHealthChange = nullptr;
+    int* cardDraw = nullptr;
     bool hasGuard = false;
     bool hasBreakthrough = false;
     bool hasCharge = false;
+    bool hasDrain = false;
+    bool hasLethal = false;
+    bool hasWard = false;
 
-    Card(int cardNumber, int instanceId, int location, int cardType, int cost, int attack, int defense,
-         string* abilities, int myHealthChange, int opponentHealthChange, int cardDraw) :
+
+    Card() = default;
+
+    Card(const Card& c){
+        this->cardNumber = c.cardNumber;
+        this->instanceId = c.instanceId;
+        this->cardType = c.cardType;
+        this->cost = c.cost;
+        this->myHealthChange = c.myHealthChange;
+        this->opponentHealthChange = c.opponentHealthChange;
+        this->cardDraw = c.cardDraw;
+        this->location = c.location;
+        this->attack = c.attack;
+        this->defense = c.defense;
+        this->hasGuard = c.hasGuard;
+        this->hasBreakthrough = c.hasBreakthrough;
+        this->hasCharge = c.hasCharge;
+        this->hasDrain = c.hasDrain;
+        this->hasLethal = c.hasLethal;
+        this->hasWard = c.hasWard;
+    }
+
+    Card(int *cardNumber, int *instanceId, int location, int *cardType, int *cost, int attack, int defense,
+         string* abilities, int *myHealthChange, int *opponentHealthChange, int *cardDraw) :
             cardNumber(cardNumber),
             instanceId(instanceId),
             location(location),
@@ -72,7 +96,6 @@ public:
             cost(cost),
             attack(attack),
             defense(defense),
-            abilities(*abilities),
             myHealthChange(
                     myHealthChange),
             opponentHealthChange(
@@ -85,7 +108,13 @@ public:
                 this->hasGuard = true;
             }else if (c == 'C'){
                 this->hasCharge = true;
-            } 
+            }else if (c == 'D'){
+                this->hasDrain = true;
+            }else if (c == 'L'){
+                this->hasLethal = true;
+            }else if (c == 'W'){
+                this->hasWard = true;
+            }
         }
     }
 
@@ -94,7 +123,7 @@ public:
     }
 
     int getValue() const{
-        return attack + defense - 2 * cost;
+        return attack + defense - 2 * *cost; // oh shit
     }
 
     void takeDamage(int amount){
@@ -110,8 +139,8 @@ public:
     int rune{};
     int handSize{};
 
-    unordered_map<int, Card*> cardsInHand;
-    unordered_map<int, Card*> cardsInBoard;
+    unordered_map<int, Card> cardsInHand;
+    unordered_map<int, Card> creaturesInBoard;
 
     Player() = default;
 
@@ -124,41 +153,85 @@ public:
     };
 
     void addCardToHand(Card* card){
-        this->cardsInHand.insert({card->instanceId, card});
+        this->cardsInHand.insert({*card->instanceId, *card});
         this->handSize++;
     }
 
     void removeCardFromHand(Card* card){
-        this->cardsInHand.erase(card->instanceId);
+        this->cardsInHand.erase(*card->instanceId);
         this->handSize--;
     }
 
     void addCardToBoard(Card* card){
-        this->cardsInBoard.insert({card->instanceId, card});
+        this->creaturesInBoard.insert({*card->instanceId, *card});
 
     }
 
     void removeCardFromBoard(Card* card){
-        this->cardsInBoard.erase(card->instanceId);
+        this->creaturesInBoard.erase(*card->instanceId);
     }
 
     void destroyCardInBoard(int instanceId){
-        cardsInBoard.erase(instanceId);
+        creaturesInBoard.erase(instanceId);
     }
+
+    Player(const Player& other){
+        this->health = other.health;
+        this->mana = other.mana;
+        this->deck = other.deck;
+        this->rune = other.rune;
+        this->handSize = other.handSize;
+        for(const auto & pair: other.creaturesInBoard){
+            Card creature = pair.second;
+            this->creaturesInBoard.insert({*(creature.instanceId), creature});
+        }
+        for(const auto & pair: other.cardsInHand){
+            Card card = pair.second;
+            this->cardsInHand.insert({*(card.instanceId), card});
+        }
+    }
+};
+
+class State{
+public:
+    Player player1;
+    Player player2;
+
+    State() = default;
+
+    State(const Player *p1, const Player* p2){
+        this->player1 = *p1;
+        this->player2 = *p2;
+    }
+};
+
+class StateManager{
+public:
+
+    static State* simulate(State* initialState){
+        auto * s = new State(&initialState->player1, &initialState->player2);
+        for(auto & pair: s->player1.cardsInHand){
+            s->player1.cardsInHand[pair.first].defense--;
+        }
+        return s;
+    };
+
+
+
 };
 
 // Given a creature, the best attack it can do ignoring allied creatures.
 int bestAttack(Card* attackingCreature, Player* oppositePlayer){
     int target = -1;
     int valueGain = 0;
-    for( const auto& pair : oppositePlayer->cardsInBoard){
-        Card* opCreature = pair.second;
+    for( auto& pair : oppositePlayer->creaturesInBoard){
+        Card* opCreature = &pair.second;
         if(attackingCreature->attack >= opCreature->defense && valueGain < opCreature->getValue() - attackingCreature->getValue()){
-            target = opCreature->instanceId;
+            target = *opCreature->instanceId;
             valueGain = opCreature->getValue() - attackingCreature->getValue();
         }
         if(opCreature->hasGuard){
-            target = opCreature->instanceId;
+            target = *opCreature->instanceId;
             valueGain = opCreature->getValue() - attackingCreature->getValue();
             break;
         }
@@ -189,11 +262,11 @@ unordered_set<Card*> selectCardsToPlay(Player* activePlayer){
 
     while(currentMana > 0 && manaCostCheck > 0){
 
-        for(const auto& pair: activePlayer->cardsInHand){
-            Card* card = pair.second;
-            if(card->cost == manaCostCheck && currentMana >= card->cost){
+        for(auto& pair: activePlayer->cardsInHand){
+            Card* card = &pair.second;
+            if(*card->cost == manaCostCheck && currentMana >= *card->cost){
                 cards.insert(card);
-                currentMana -= card->cost;
+                currentMana -= *card->cost;
             }
         }
 
@@ -206,23 +279,23 @@ unordered_set<Card*> selectCardsToPlay(Player* activePlayer){
 
 void playCards(){
     for(Card* card: selectCardsToPlay(player1)){
-        summon(card->instanceId);
+        summon(*card->instanceId);
         cout << ";";
     }
 }
 
 void attackWIthCreatures(Player* attackingPlayer){
 
-    for(const auto& pair: attackingPlayer->cardsInBoard){
-        Card* card = pair.second;
+    for(auto& pair: attackingPlayer->creaturesInBoard){
+        Card* card = &pair.second;
         int target = bestAttack(card, player2);
-        attack(card->instanceId, target);
+        attack(*card->instanceId, target);
 
         if(target != -1){
-            Card* attackedCreature = player2->cardsInBoard[target];
+            Card* attackedCreature = &player2->creaturesInBoard[target];
             attackedCreature->takeDamage(card->attack);
             if(attackedCreature->defense <= 0){
-                player2->destroyCardInBoard(attackedCreature->instanceId);
+                player2->destroyCardInBoard(*attackedCreature->instanceId);
             }
         }
 
@@ -247,20 +320,20 @@ void initializeState(int& time){
     player2->handSize = opponentHand;
     int cardCount;
     cin >> cardCount; cin.ignore();
-    Card* cards[cardCount];
+    Card * cards[cardCount];
     for (int i = 0; i < cardCount; i++) {
-        int cardNumber;
-        int instanceId;
+        int * cardNumber = new int();
+        int * instanceId = new int();
         int location;
-        int cardType;
-        int cost;
+        int * cardType = new int();
+        int * cost = new int();
         int attack;
         int defense;
         string abilities;
-        int myHealthChange;
-        int opponentHealthChange;
-        int cardDraw;
-        cin >> cardNumber >> instanceId >> location >> cardType >> cost >> attack >> defense >> abilities >> myHealthChange >> opponentHealthChange >> cardDraw; cin.ignore();
+        int * myHealthChange = new int();
+        int * opponentHealthChange = new int();
+        int * cardDraw = new int();
+        cin >> *cardNumber >> *instanceId >> location >> *cardType >> *cost >> attack >> defense >> abilities >> *myHealthChange >> *opponentHealthChange >> *cardDraw; cin.ignore();
         cards[i] = new Card(cardNumber, instanceId, location, cardType, cost, attack, defense, &abilities, myHealthChange, opponentHealthChange, cardDraw);
         if(time<30){
             cardsToPick[i] = cards[i];
@@ -278,9 +351,19 @@ void initializeState(int& time){
 int main()
 {
     int time = 0;
+    State * nextState;
+    State * initialState;
     // game loop
     while (true) {
         initializeState(time);
+        initialState = new State(player1, player2);
+        nextState = StateManager::simulate(initialState);
+        for(auto & pair: initialState->player1.cardsInHand){
+            Card card1 = initialState->player1.cardsInHand[pair.first];
+            Card card2 = nextState->player1.cardsInHand[pair.first];
+            cerr << card1.defense << endl;
+            cerr << card2.defense << endl;
+        }
         if(time < 30){
             pick(bestPick());
         }else{
