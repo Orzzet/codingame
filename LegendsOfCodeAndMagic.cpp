@@ -1,13 +1,17 @@
+#pragma GCC optimize("-O3", "inline", "omit-frame-pointer", "unroll-loops")
+
 #include <iostream>
 #include <string>
 #include <utility> #include <vector>
 #include <algorithm>
 #include <sstream>
 #include <iterator>
+#include <chrono>
 #include <unordered_set>
 #include <unordered_map>
 
 using namespace std;
+using namespace std::chrono;
 
 class Player;
 class Card;
@@ -16,6 +20,13 @@ const int CREATURE = 0;
 const int GREEN_ITEM = 1;
 const int RED_ITEM = 2;
 const int BLUE_ITEM = 3;
+const int SUMMON = 0;
+const int ATTACK = 1;
+const int USE = 2;
+const int PASS = 3;
+const int HAND = 0;
+const int PLAYER_BOARD = 1;
+const int OPPONENT_BOARD = -1;
 
 Player* player1;
 Player* player2;
@@ -51,6 +62,23 @@ void end(){
     cout << endl;
 }
 
+class Action{
+public:
+    int actionType;
+    int id1;
+    int id2;
+
+    Action(int actionType, int id1, int id2):
+    actionType(actionType),
+    id1(id1),
+    id2(id2)
+    {};
+
+    bool operator < (const Action & other) const{
+        return this->actionType + this->id1 * 31 + this->id2 * 127 < other.actionType + other.id1 * 31 + other.id2 * 127;
+    };
+};
+
 class Card{
 public:
     // All cards with the same cardNumber share the same
@@ -71,6 +99,7 @@ public:
     bool hasLethal = false;
     bool hasWard = false;
     bool canAttack = false;
+    bool hasAttacked = false;
 
 
     Card() = default;
@@ -93,10 +122,11 @@ public:
         this->hasLethal = c.hasLethal;
         this->hasWard = c.hasWard;
         this->canAttack = c.canAttack;
+        this->hasAttacked = c.hasAttacked;
     }
 
     Card(int *cardNumber, int instanceId, int location, int *cardType, int *cost, int attack, int defense,
-         string* abilities, int *myHealthChange, int *opponentHealthChange, int *cardDraw, bool canAttack) :
+         string* abilities, int *myHealthChange, int *opponentHealthChange, int *cardDraw, bool canAttack, bool hasAttacked) :
             cardNumber(cardNumber),
             instanceId(instanceId),
             location(location),
@@ -109,7 +139,8 @@ public:
             opponentHealthChange(
                     opponentHealthChange),
             cardDraw(cardDraw),
-            canAttack(canAttack){
+            canAttack(canAttack),
+            hasAttacked(hasAttacked){
         for(char& c: *abilities){
             if(c == 'B'){
                 this->hasBreakthrough = true;
@@ -131,8 +162,32 @@ public:
         return this->instanceId < other.instanceId;
     }
 
-    int getValue() const{
-        return attack + defense - 2 * *cost; // oh s**t
+    int getPickValue() const{
+
+        int value = 0;
+
+        if(*cardType == RED_ITEM || *cardType == BLUE_ITEM){
+            value += (-attack - defense - 2 * *cost);
+        }else{
+            value += (attack + defense - 2 * *cost) * 2;
+            value += *myHealthChange - *opponentHealthChange;
+            value += hasWard && hasLethal ? 4 : 0;
+            value += hasWard && hasGuard ? 4 : 0;
+            value += attack >= 5 && hasWard ? 2 : 0;
+        }
+
+        if(*cardType == CREATURE){
+            value -= attack <= 1 ? 1 : 0;
+            value -= attack == 0 ? 1 : 0;
+            value -= *cost - defense >= 2 ? 1 : 0;
+            value -= *cost - defense >= 3 ? 1 : 0;
+        }
+
+        value += *cardDraw * 2;
+        value += hasCharge + hasDrain + hasBreakthrough + hasLethal + hasWard * 2 + hasGuard;
+
+
+        return value;
     }
 
     void takeDamage(int amount){
@@ -148,6 +203,7 @@ public:
     int rune{};
     int handSize{};
     int turn{};
+    int nextTurnDraw{};
 
     unordered_map<int, Card> cardsInHand;
     unordered_map<int, Card> creaturesInBoard;
@@ -161,6 +217,7 @@ public:
         this->rune = rune;
         this->handSize = 0;
         this->turn = turn;
+        this->nextTurnDraw = 0;
     };
 
     void addCardToHand(Card* card){
@@ -186,6 +243,20 @@ public:
         creaturesInBoard.erase(instanceId);
     }
 
+    int playCreature(int instanceId){
+        Card & creature = this->cardsInHand[instanceId];
+
+        this->mana -= *creature.cost;
+        this->cardsInHand.erase(instanceId);
+        creature.location = PLAYER_BOARD;
+        creature.canAttack = creature.hasCharge;
+        this->creaturesInBoard.insert({creature.instanceId, creature});
+        this->health += *creature.myHealthChange;
+        this->nextTurnDraw += *creature.cardDraw;
+
+        return *creature.opponentHealthChange;
+    }
+
     Player(const Player& other){
         this->health = other.health;
         this->mana = other.mana;
@@ -193,6 +264,7 @@ public:
         this->rune = other.rune;
         this->handSize = other.handSize;
         this->turn = other.turn;
+        this->nextTurnDraw = other.nextTurnDraw;
         for(const auto & pair: other.creaturesInBoard){
             Card creature = pair.second;
             this->creaturesInBoard.insert({creature.instanceId, creature});
@@ -221,14 +293,115 @@ public:
 class StateManager{
 public:
 
-    static State* simulate(State* initialState){
+    static State* simulate(State* initialState, Action & action){
         auto * s = new State(&initialState->player1, &initialState->player2);
+
+        // SUMMON id1
+        if(action.actionType == SUMMON){
+            int enemyDamage = s->player1.playCreature(action.id1);
+            s->player2.health += enemyDamage;
+        } else if (action.actionType == ATTACK){                                              // ATTACK id1 id2
+            Card * attCreature = &s->player1.creaturesInBoard[action.id1];
+
+            if(action.id2 == -1){
+                s->player2.health -= attCreature->attack;
+                if(attCreature->hasDrain){
+                    s->player1.health += attCreature->attack;
+                }
+                attCreature->canAttack = false;
+            } else{
+                Card * defCreature = &s->player2.creaturesInBoard[action.id2];
+
+                int damageGiven = false;
+                int damageTaken = false;
+
+                if(attCreature->attack > 0){
+                    if(defCreature->hasWard){
+                        defCreature->hasWard = false;
+                    }else{
+                        if(attCreature->hasBreakthrough){
+                            s->player2.health -= max(attCreature->attack - defCreature->defense, 0);
+                        }
+                        if(attCreature->hasDrain){
+                            s->player1.health += attCreature->attack;
+                        }
+                        defCreature->defense -= attCreature->attack;
+                        damageGiven = true;
+                    }
+                }
+                if(defCreature->attack > 0){
+                    if(attCreature->hasWard){
+                        attCreature->hasWard = false;
+                    }else{
+                        if(defCreature->hasDrain){
+                            s->player2.health += defCreature->attack;
+                        }
+
+                        attCreature->defense -= defCreature->attack;
+                        damageTaken = true;
+                    }
+                }
+                if(attCreature->defense <= 0 || damageTaken && defCreature->hasLethal){
+                    s->player1.creaturesInBoard.erase(action.id1);
+                }
+                if(defCreature->defense <= 0 || damageGiven && attCreature->hasLethal){
+                    s->player2.creaturesInBoard.erase(action.id2);
+                }
+                attCreature->canAttack = false;
+                attCreature->hasAttacked = true;
+            }
+        } else if(action.actionType == USE){                                // USE id1 id2
+            Card * item = &s->player1.cardsInHand[action.id1];
+            if(*item->cardType == GREEN_ITEM){                              // USE id1 ownBoardCreatureId
+                Card * target = &s->player1.creaturesInBoard[action.id2];
+                target->hasCharge = target->hasCharge || item->hasCharge;
+                if(target->hasCharge){
+                    target->canAttack = !target->hasAttacked;
+                }
+                target->hasDrain = target->hasDrain || item->hasDrain;
+                target->hasWard = target->hasWard || item->hasWard;
+                target->hasGuard = target->hasGuard || item->hasGuard;
+                target->hasLethal = target->hasLethal || item->hasLethal;
+                target->hasBreakthrough = target->hasBreakthrough || item->hasBreakthrough;
+                target->attack += item->attack;
+                target->defense += item->defense;
+            } else {
+                if(action.id2 != -1){                                                   // USE id1 enemyBoardCreatureId
+                    Card * target = &s->player2.creaturesInBoard[action.id2];
+                    target->hasCharge = target->hasCharge && !item->hasCharge;
+                    target->hasDrain = target->hasDrain && !item->hasDrain;
+                    target->hasWard = target->hasWard && !item->hasWard;
+                    target->hasGuard = target->hasGuard && !item->hasGuard;
+                    target->hasLethal = target->hasLethal && !item->hasLethal;
+                    target->hasBreakthrough = target->hasBreakthrough && !item->hasBreakthrough;
+                    target->attack = max(0, target->attack + item->attack);
+                    if(target->hasWard && item->defense < 0){
+                        target->hasWard = false;
+                    }else{
+                        target->defense += item->defense;
+                    }
+
+                    if(target->defense <= 0){
+                        s->player2.creaturesInBoard.erase(action.id2);
+                    }
+                }
+                s->player1.health += *item->myHealthChange;
+                s->player1.nextTurnDraw += *item->cardDraw;
+                s->player2.health += *item->opponentHealthChange;
+                s->player1.cardsInHand.erase(action.id1);
+            }
+            if(s->player2.health <= s->player2.rune){
+                int runesCrushed = (s->player2.rune - s->player2.health) / 5;
+                s->player2.nextTurnDraw += runesCrushed;
+                s->player2.rune -= 5 * runesCrushed;
+            }
+        }
 
         return s;
     };
 
-    static unordered_set<string> legalActions(State* s){
-        unordered_set<string> actions;
+    static unordered_set<Action*> legalActions(State* s){
+        unordered_set<Action*> actions;
 
         // Legal summons and items
         for(auto & pair: s->player1.cardsInHand) {
@@ -236,44 +409,40 @@ public:
 
             if (*c->cost <= s->player1.mana) {
                 if (*c->cardType == CREATURE && s->player1.creaturesInBoard.size() < 6) {
-                    string a = "SUMMON ";
-                    actions.insert(a + to_string(c->instanceId));
+                    auto * a = new Action(SUMMON, c->instanceId, 0);
+                    actions.insert(a);
                 } else if (*c->cardType == GREEN_ITEM) {
                     for (auto &targetPair: s->player1.creaturesInBoard) {
                         Card *target = &targetPair.second;
-                        string a = "USE ";
-                        a += to_string(c->instanceId) + " " + to_string(target->instanceId);
+                        auto * a = new Action(USE, c->instanceId, target->instanceId);
                         actions.insert(a);
                     }
                 } else if (*c->cardType == RED_ITEM || *c->cardType == BLUE_ITEM && c->defense < 0) {
                     for (auto &targetPair: s->player2.creaturesInBoard) {
                         Card *target = &targetPair.second;
-                        string a = "USE ";
-                        a += to_string(c->instanceId) + " " + to_string(target->instanceId);
+                        auto * a = new Action(USE, c->instanceId, target->instanceId);
                         actions.insert(a);
                     }
-                } else {
-                    string a = "USE ";
-                    a += to_string(c->instanceId) + " -1";
+                } else if (*c->cardType == BLUE_ITEM && c->defense >= 0) {
+                    auto * a = new Action(USE, c->instanceId, -1);
                     actions.insert(a);
                 }
             }
         }
 
         // Legal attacks
-        unordered_set<string> guardAttacks;
-        unordered_set<string> otherAttacks;
+        unordered_set<Action*> guardAttacks;
+        unordered_set<Action*> otherAttacks;
         for(auto & pair: s->player1.creaturesInBoard){
             Card * c = &pair.second;
 
-            if(!c->canAttack){
+            if(!c->canAttack || c->attack <= 0){
                 continue;
             }
 
             for(auto & targetPair: s->player2.creaturesInBoard){
                 Card * target = &targetPair.second;
-                string a = "ATTACK ";
-                a += to_string(c->instanceId) + " " + to_string(target->instanceId);
+                auto * a = new Action(ATTACK, c->instanceId, target->instanceId);
                 if(target->hasGuard){
                     guardAttacks.insert(a);
                 }else{
@@ -282,8 +451,7 @@ public:
             }
 
             // Attack to opponent
-            string a = "ATTACK ";
-            a += to_string(c->instanceId) + " -1";
+            auto * a = new Action(ATTACK, c->instanceId, -1);
             otherAttacks.insert(a);
         }
 
@@ -295,6 +463,21 @@ public:
 
         return actions;
     }
+
+    static int eval(State* s){
+        // Win condition
+        if(s->player2.health <= 0){
+            return 1000 - s->player1.turn;
+        }
+        // Lose condition
+        if(s->player1.health <= 0){
+            return -1000 + s->player1.turn;
+        }
+        int score = s->player1.health - 5*s->player2.health;
+        score += 4*(s->player1.creaturesInBoard.size() - s->player2.creaturesInBoard.size());
+        score += 3*(s->player1.handSize + s->player1.nextTurnDraw - s->player2.handSize - s->player2.nextTurnDraw);
+        return score;
+    }
 };
 
 // Given a creature, the best attack it can do ignoring allied creatures.
@@ -303,13 +486,14 @@ int bestAttack(Card* attackingCreature, Player* oppositePlayer){
     int valueGain = 0;
     for( auto& pair : oppositePlayer->creaturesInBoard){
         Card* opCreature = &pair.second;
-        if(attackingCreature->attack >= opCreature->defense && valueGain < opCreature->getValue() - attackingCreature->getValue()){
+        if(attackingCreature->attack >= opCreature->defense && valueGain < opCreature->getPickValue() -
+                                                                                   attackingCreature->getPickValue()){
             target = opCreature->instanceId;
-            valueGain = opCreature->getValue() - attackingCreature->getValue();
+            valueGain = opCreature->getPickValue() - attackingCreature->getPickValue();
         }
         if(opCreature->hasGuard){
             target = opCreature->instanceId;
-            valueGain = opCreature->getValue() - attackingCreature->getValue();
+            valueGain = opCreature->getPickValue() - attackingCreature->getPickValue();
             break;
         }
     }
@@ -323,9 +507,9 @@ int bestPick(){
     int id = 0;
     int cardNo = 0;
     for(Card* card: cardsToPick){
-        if(card->getValue() > maxValue){
+        if(card->getPickValue() > maxValue){
             id = cardNo;
-            maxValue = card->getValue();
+            maxValue = card->getPickValue();
         }
         cardNo++;
     }
@@ -411,7 +595,7 @@ void initializeState(int turn){
         int * opponentHealthChange = new int();
         int * cardDraw = new int();
         cin >> *cardNumber >> instanceId >> location >> *cardType >> *cost >> attack >> defense >> abilities >> *myHealthChange >> *opponentHealthChange >> *cardDraw; cin.ignore();
-        cards[i] = new Card(cardNumber, instanceId, location, cardType, cost, attack, defense, &abilities, myHealthChange, opponentHealthChange, cardDraw, true);
+        cards[i] = new Card(cardNumber, instanceId, location, cardType, cost, attack, defense, &abilities, myHealthChange, opponentHealthChange, cardDraw, true, false);
         if(turn<30){
             cardsToPick[i] = cards[i];
         }else if(location == 0){
@@ -430,24 +614,53 @@ int main()
     int turn = 0;
     State * nextState;
     State * initialState;
+    high_resolution_clock::time_point start;
+    high_resolution_clock::time_point finish;
     // game loop
     while (true) {
         initializeState(turn);
+        start = high_resolution_clock::now();
         initialState = new State(player1, player2);
 
         // test
-        unordered_set<string> actions = StateManager::legalActions(initialState);
-        for(const string &s: actions){
-            cerr << s << endl;
+
+        unordered_set<Action *> actions = StateManager::legalActions(initialState);
+        cerr << "Initial score: " << StateManager::eval(initialState) << endl;
+        for(Action * a: actions){
+            cerr << "Action: " << a->actionType << " " << a->id1 << " " << a->id2 << endl;
+            //for(int i = 0; i<1000; i++) {
+                nextState = StateManager::simulate(initialState, *a);
+            //}
+            cerr << "Action score: " << StateManager::eval(nextState) << endl;
+            cerr << "enemy board: " << initialState->player2.creaturesInBoard.size() << " "
+             << nextState->player2.creaturesInBoard.size() << endl;
+            cerr << "enemy health: " << initialState->player2.health << " " << nextState->player2.health << endl;
+            cerr << "defense enemy creatures: ";
+            for(auto & pair: nextState->player1.creaturesInBoard){
+                Card * c = &pair.second;
+                cerr << c->defense << " ";
+            }
+            cerr << endl;
         }
 
 
         if(turn < 30){
+            // test
+            for(Card* card: cardsToPick){
+                cerr << " value: " << card->getPickValue() << " ";
+            }
+
+            cerr << endl;
             pick(bestPick());
         }else{
             playCards();
             attackWithCreatures(player1);
         }
+
+        finish = high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count();
+
+        cerr << "** Time elapsed: " << elapsed << "ms" << endl;
         end();
         turn++;
     }
