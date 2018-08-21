@@ -2,31 +2,36 @@
 
 #include <iostream>
 #include <string>
-#include <utility> #include <vector>
+#include <utility>
+#include <vector>
 #include <algorithm>
 #include <sstream>
 #include <iterator>
 #include <chrono>
 #include <unordered_set>
 #include <unordered_map>
+#include <queue>
+#include <set>
 
 using namespace std;
 using namespace std::chrono;
 
 class Player;
 class Card;
+class State;
+class StateManager;
 
-const int CREATURE = 0;
-const int GREEN_ITEM = 1;
-const int RED_ITEM = 2;
-const int BLUE_ITEM = 3;
-const int SUMMON = 0;
-const int ATTACK = 1;
-const int USE = 2;
-const int PASS = 3;
-const int HAND = 0;
-const int PLAYER_BOARD = 1;
-const int OPPONENT_BOARD = -1;
+#define CREATURE 0
+#define GREEN_ITEM 1
+#define RED_ITEM 2
+#define BLUE_ITEM 3
+#define SUMMON 0
+#define ATTACK 1
+#define USE 2
+#define PASS 3
+#define AND 0
+#define PLAYER_BOARD 1
+#define OPPONENT_BOARD -1
 
 Player* player1;
 Player* player2;
@@ -67,6 +72,8 @@ public:
     int actionType;
     int id1;
     int id2;
+
+    Action() = default;
 
     Action(int actionType, int id1, int id2):
     actionType(actionType),
@@ -281,6 +288,7 @@ public:
     Player player1;
     Player player2;
     int turn{};
+    int id{};
 
     State() = default;
 
@@ -288,12 +296,37 @@ public:
         this->player1 = *p1;
         this->player2 = *p2;
     }
+
+    bool operator < (const State & other) const;
+};
+
+class PSol{
+public:
+
+    int id;
+    int parentId;
+    Action * action;
+    int score;
+
+    PSol() = default;
+
+    PSol(int id, int parentId, Action * action, int score):
+    id(id),
+    parentId(parentId),
+    action(action),
+    score(score)
+    {};
+
+    bool operator < (const PSol & other) const{
+        return this->id < other.id;
+    };
+
 };
 
 class StateManager{
 public:
 
-    static State* simulate(State* initialState, Action & action){
+    static State* simulate(const State* initialState, const Action & action){
         auto * s = new State(&initialState->player1, &initialState->player2);
 
         // SUMMON id1
@@ -388,24 +421,24 @@ public:
                 s->player1.health += *item->myHealthChange;
                 s->player1.nextTurnDraw += *item->cardDraw;
                 s->player2.health += *item->opponentHealthChange;
-                s->player1.cardsInHand.erase(action.id1);
             }
-            if(s->player2.health <= s->player2.rune){
-                int runesCrushed = (s->player2.rune - s->player2.health) / 5;
-                s->player2.nextTurnDraw += runesCrushed;
-                s->player2.rune -= 5 * runesCrushed;
-            }
+            s->player1.cardsInHand.erase(action.id1);
         }
 
+        if(s->player2.health <= s->player2.rune){
+            int runesCrushed = (s->player2.rune - s->player2.health) / 5;
+            s->player2.nextTurnDraw += runesCrushed;
+            s->player2.rune -= 5 * runesCrushed;
+        }
         return s;
     };
 
-    static unordered_set<Action*> legalActions(State* s){
+    static unordered_set<Action*> legalActions(const State* s){
         unordered_set<Action*> actions;
 
         // Legal summons and items
         for(auto & pair: s->player1.cardsInHand) {
-            Card *c = &pair.second;
+            const Card *c = &pair.second;
 
             if (*c->cost <= s->player1.mana) {
                 if (*c->cardType == CREATURE && s->player1.creaturesInBoard.size() < 6) {
@@ -413,13 +446,13 @@ public:
                     actions.insert(a);
                 } else if (*c->cardType == GREEN_ITEM) {
                     for (auto &targetPair: s->player1.creaturesInBoard) {
-                        Card *target = &targetPair.second;
+                        const Card *target = &targetPair.second;
                         auto * a = new Action(USE, c->instanceId, target->instanceId);
                         actions.insert(a);
                     }
                 } else if (*c->cardType == RED_ITEM || *c->cardType == BLUE_ITEM && c->defense < 0) {
                     for (auto &targetPair: s->player2.creaturesInBoard) {
-                        Card *target = &targetPair.second;
+                        const Card *target = &targetPair.second;
                         auto * a = new Action(USE, c->instanceId, target->instanceId);
                         actions.insert(a);
                     }
@@ -434,14 +467,14 @@ public:
         unordered_set<Action*> guardAttacks;
         unordered_set<Action*> otherAttacks;
         for(auto & pair: s->player1.creaturesInBoard){
-            Card * c = &pair.second;
+            const Card * c = &pair.second;
 
-            if(!c->canAttack || c->attack <= 0){
+            if(!c->canAttack || c->attack <= 0 || c->hasAttacked){
                 continue;
             }
 
             for(auto & targetPair: s->player2.creaturesInBoard){
-                Card * target = &targetPair.second;
+                const Card * target = &targetPair.second;
                 auto * a = new Action(ATTACK, c->instanceId, target->instanceId);
                 if(target->hasGuard){
                     guardAttacks.insert(a);
@@ -464,7 +497,7 @@ public:
         return actions;
     }
 
-    static int eval(State* s){
+    static int eval(const State* s){
         // Win condition
         if(s->player2.health <= 0){
             return 1000 - s->player1.turn;
@@ -478,6 +511,65 @@ public:
         score += 3*(s->player1.handSize + s->player1.nextTurnDraw - s->player2.handSize - s->player2.nextTurnDraw);
         return score;
     }
+
+    static vector<Action *> dynamicSearch(State* initialState){
+        int idCount = 0;
+        unordered_map<int, PSol *> solTree;
+        set<State *> statesToVisit;
+        vector<Action *> solActions;
+
+        solTree.insert({++idCount, new PSol(idCount, 0, nullptr, StateManager::eval(initialState))});
+        initialState->id = 1;
+        statesToVisit.insert(initialState);
+
+        State * stateVisiting;
+        while(!statesToVisit.empty()){
+            stateVisiting = *std::next(statesToVisit.begin(), 0);
+            int idParent = stateVisiting->id;
+            for(Action * action: StateManager::legalActions(stateVisiting)){
+                State * newState = StateManager::simulate(stateVisiting, *action);
+                int score = StateManager::eval(newState);
+                solTree.insert({++idCount, new PSol(idCount, idParent, action, score)});
+                newState->id = idCount;
+                statesToVisit.insert(newState);
+                if(statesToVisit.size() > 200){
+                    statesToVisit.erase(std::next(statesToVisit.begin(), 200));
+                }
+            }
+            statesToVisit.erase(stateVisiting);
+        }
+
+        if(solTree.size() <= 1){
+            solActions.push_back(new Action(3, 0, 0));
+            return solActions;
+        }
+
+        auto * bestSol = new PSol(0, 0, nullptr, -1000);
+        PSol sol{};
+        for(auto & pair: solTree){
+            sol = *pair.second;
+            if(*bestSol < sol){
+                *bestSol = sol;
+            }
+        }
+
+        bool keepLooking = true;
+        while(keepLooking){
+            solActions.push_back(bestSol->action);
+            bestSol = solTree[bestSol->parentId];
+            if(bestSol->id == 1){
+                keepLooking = false;
+            }
+        }
+
+        std::reverse(solActions.begin(), solActions.end());
+
+        return solActions;
+    }
+};
+
+bool State::operator < (const State & other) const{
+    return StateManager::eval(this) < StateManager::eval(&other);
 };
 
 // Given a creature, the best attack it can do ignoring allied creatures.
@@ -499,6 +591,21 @@ int bestAttack(Card* attackingCreature, Player* oppositePlayer){
     }
 
     return target;
+}
+
+void executeActions(vector<Action *> actions){
+    for(Action * a: actions){
+        if(a->actionType == SUMMON){
+            cout << "SUMMON " << a->id1 << ";";
+        }else if(a->actionType == ATTACK){
+            cout << "ATTACK " << a->id1 << " " << a->id2 << ";";
+        }else if(a->actionType == USE){
+            cout << "USE " << a->id1 << " " << a->id2 << ";";
+        }else if(a->actionType == PASS){
+            cout << "PASS";
+        }
+    }
+    cout << endl;
 }
 
 // Pick between 3 cards based on the value of the cards.
@@ -624,26 +731,6 @@ int main()
 
         // test
 
-        unordered_set<Action *> actions = StateManager::legalActions(initialState);
-        cerr << "Initial score: " << StateManager::eval(initialState) << endl;
-        for(Action * a: actions){
-            cerr << "Action: " << a->actionType << " " << a->id1 << " " << a->id2 << endl;
-            //for(int i = 0; i<1000; i++) {
-                nextState = StateManager::simulate(initialState, *a);
-            //}
-            cerr << "Action score: " << StateManager::eval(nextState) << endl;
-            cerr << "enemy board: " << initialState->player2.creaturesInBoard.size() << " "
-             << nextState->player2.creaturesInBoard.size() << endl;
-            cerr << "enemy health: " << initialState->player2.health << " " << nextState->player2.health << endl;
-            cerr << "defense enemy creatures: ";
-            for(auto & pair: nextState->player1.creaturesInBoard){
-                Card * c = &pair.second;
-                cerr << c->defense << " ";
-            }
-            cerr << endl;
-        }
-
-
         if(turn < 30){
             // test
             for(Card* card: cardsToPick){
@@ -652,16 +739,15 @@ int main()
 
             cerr << endl;
             pick(bestPick());
+            end();
         }else{
-            playCards();
-            attackWithCreatures(player1);
+            executeActions(StateManager::dynamicSearch(initialState));
         }
 
         finish = high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count();
 
-        cerr << "** Time elapsed: " << elapsed << "ms" << endl;
-        end();
+        cerr << "** Time: " << elapsed << endl;
         turn++;
     }
 }
