@@ -10,6 +10,7 @@
 #include <chrono>
 #include <unordered_set>
 #include <unordered_map>
+#include <map>
 #include <queue>
 #include <set>
 
@@ -29,9 +30,24 @@ class StateManager;
 #define ATTACK 1
 #define USE 2
 #define PASS 3
-#define AND 0
+#define HAND 0
 #define PLAYER_BOARD 1
-#define OPPONENT_BOARD -1
+#define OPPONENT_BOARD (-1)
+
+int turn;
+int simsNo;
+high_resolution_clock::time_point start;
+high_resolution_clock::time_point finish;
+
+map<int, float> pickValues;
+map<int, int> creaturesCurve;
+map<int, int> itemsCurve;
+map<int, int> habilitiesCurve;
+map<int, int> minCreaturesCurve;
+map<int, int> maxCreaturesCurve;
+map<int, int> minItemsCurve;
+map<int, int> maxItemsCurve;
+map<char, int> minHabilitiesCurve;
 
 Player* player1;
 Player* player2;
@@ -76,9 +92,9 @@ public:
     Action() = default;
 
     Action(int actionType, int id1, int id2):
-    actionType(actionType),
-    id1(id1),
-    id2(id2)
+            actionType(actionType),
+            id1(id1),
+            id2(id2)
     {};
 
     bool operator < (const Action & other) const{
@@ -169,31 +185,63 @@ public:
         return this->instanceId < other.instanceId;
     }
 
-    int getPickValue() const{
+    float getPickValue() const{
+        float pickValue = pickValues[*this->cardNumber];
 
-        int value = 0;
+        if(*this->cardType == CREATURE){
+            pickValue += *this->cost == 0 && creaturesCurve[0] < minCreaturesCurve[0] ? 2 : 0;
+            pickValue += *this->cost == 1 && creaturesCurve[1] < minCreaturesCurve[1] ? 3 : 0;
+            pickValue += *this->cost == 2 && creaturesCurve[2] < minCreaturesCurve[2] ? 1 : 0;
+            pickValue += *this->cost == 3 && creaturesCurve[3] < minCreaturesCurve[3] ? 1 : 0;
+            pickValue += *this->cost == 4 && creaturesCurve[4] < minCreaturesCurve[4] ? 1 : 0;
 
-        if(*cardType == RED_ITEM || *cardType == BLUE_ITEM){
-            value += (-attack - defense - 2 * *cost);
+
+            pickValue -= *this->cost == 0 && creaturesCurve[0] >= maxCreaturesCurve[0] ? 1 : 0;
+            pickValue -= *this->cost == 1 && creaturesCurve[1] >= maxCreaturesCurve[1] ? 1 : 0;
+            pickValue -= *this->cost == 2 && creaturesCurve[2] >= maxCreaturesCurve[2] ? 1 : 0;
+            pickValue -= *this->cost == 3 && creaturesCurve[3] >= maxCreaturesCurve[3] ? 1 : 0;
+            pickValue -= *this->cost == 4 && creaturesCurve[4] >= maxCreaturesCurve[4] ? 1 : 0;
+            pickValue -= *this->cost == 5 && creaturesCurve[5] >= maxCreaturesCurve[5] ? 1 : 0;
+
+            pickValue += this->hasGuard && habilitiesCurve['G'] < minHabilitiesCurve['G'] ? 1 : 0;
+            pickValue += this->hasLethal && habilitiesCurve['L'] < minHabilitiesCurve['L'] ? 1 : 0;
+
+
+            if(turn >= 13){
+                pickValue += *this->cost == 0 && creaturesCurve[0] < minCreaturesCurve[0] ? 1 : 0;
+                pickValue += *this->cost == 1 && creaturesCurve[1] < minCreaturesCurve[1] ? 1 : 0;
+                pickValue += *this->cost == 2 && creaturesCurve[2] < minCreaturesCurve[2] ? 1 : 0;
+                pickValue += *this->cost == 3 && creaturesCurve[3] < minCreaturesCurve[3] ? 1 : 0;
+                pickValue += *this->cost == 4 && creaturesCurve[4] < minCreaturesCurve[4] ? 1 : 0;
+                pickValue += *this->cost == 5 && creaturesCurve[5] < minCreaturesCurve[5] ? 1 : 0;
+                pickValue += *this->cost == 6 && creaturesCurve[6] < minCreaturesCurve[6] ? 1 : 0;
+                pickValue += *this->cost >= 7 && creaturesCurve[7] < minCreaturesCurve[7] ? 1 : 0;
+
+                pickValue -= *this->cost == 0 && creaturesCurve[0] >= maxCreaturesCurve[0] ? 1 : 0;
+                pickValue -= *this->cost == 1 && creaturesCurve[1] >= maxCreaturesCurve[1] ? 2 : 0;
+                pickValue -= *this->cost == 2 && creaturesCurve[2] >= maxCreaturesCurve[2] ? 1 : 0;
+                pickValue -= *this->cost == 6 && creaturesCurve[6] >= maxCreaturesCurve[6] ? 1 : 0;
+                pickValue -= *this->cost >= 7 && creaturesCurve[7] >= maxCreaturesCurve[7] ? 2 : 0;
+            }
         }else{
-            value += (attack + defense - 2 * *cost) * 2;
-            value += *myHealthChange - *opponentHealthChange;
-            value += hasWard && hasLethal ? 4 : 0;
-            value += hasWard && hasGuard ? 4 : 0;
-            value += attack >= 5 && hasWard ? 2 : 0;
+
+            pickValue += itemsCurve[0] < minItemsCurve[0] ? 1 : 0;
+
+            pickValue -= itemsCurve[0] >= maxItemsCurve[0] ? 1 : 0;
+            pickValue -= *this->cardType == GREEN_ITEM && itemsCurve[1] >= maxItemsCurve[1] ? 1 : 0;
+            pickValue -= *this->cardType == RED_ITEM && itemsCurve[2] >= maxItemsCurve[2] ? 1 : 0;
+            pickValue -= *this->cardType == BLUE_ITEM && itemsCurve[3] >= maxItemsCurve[3] ? 1 : 0;
         }
 
-        if(*cardType == CREATURE){
-            value -= attack <= 1 ? 1 : 0;
-            value -= attack == 0 ? 1 : 0;
-            value -= *cost - defense >= 2 ? 1 : 0;
-            value -= *cost - defense >= 3 ? 1 : 0;
-        }
+        return pickValue;
+    }
 
-        value += *cardDraw * 2;
-        value += hasCharge + hasDrain + hasBreakthrough + hasLethal + hasWard * 2 + hasGuard;
-
-
+    int getBoardValue() const{
+        int value = this->attack + this->defense;
+        value += this->hasWard ? 1 : 0;
+        value += this->hasLethal ? 1 : 0;
+        value += this->hasDrain ? 1 : 0;
+        value += this->hasGuard ? 1 : 0;
         return value;
     }
 
@@ -205,6 +253,7 @@ public:
 class Player{
 public:
     int health{};
+    int maxMana{};
     int mana{};
     int deck{};
     int rune{};
@@ -220,6 +269,7 @@ public:
     Player(int health, int mana, int deck, int rune, int turn){
         this->health = health;
         this->mana = mana;
+        this->maxMana = mana;
         this->deck = deck;
         this->rune = rune;
         this->handSize = 0;
@@ -272,6 +322,7 @@ public:
         this->handSize = other.handSize;
         this->turn = other.turn;
         this->nextTurnDraw = other.nextTurnDraw;
+        this->maxMana = other.maxMana;
         for(const auto & pair: other.creaturesInBoard){
             Card creature = pair.second;
             this->creaturesInBoard.insert({creature.instanceId, creature});
@@ -283,12 +334,24 @@ public:
     }
 };
 
+class BoardInfo{
+public:
+    int p1BoardValue = 0;
+    int p2BoardValue = 0;
+    int p1GuardValue = 0;
+    int p2AttackPotential = 0;
+    bool infoUpdated = false;
+
+    BoardInfo() = default;
+};
+
 class State{
 public:
     Player player1;
     Player player2;
     int turn{};
     int id{};
+
 
     State() = default;
 
@@ -311,10 +374,10 @@ public:
     PSol() = default;
 
     PSol(int id, int parentId, Action * action, int score):
-    id(id),
-    parentId(parentId),
-    action(action),
-    score(score)
+            id(id),
+            parentId(parentId),
+            action(action),
+            score(score)
     {};
 
     bool operator < (const PSol & other) const{
@@ -328,6 +391,7 @@ public:
 
     static State* simulate(const State* initialState, const Action & action){
         auto * s = new State(&initialState->player1, &initialState->player2);
+        simsNo++;
 
         // SUMMON id1
         if(action.actionType == SUMMON){
@@ -385,6 +449,7 @@ public:
             }
         } else if(action.actionType == USE){                                // USE id1 id2
             Card * item = &s->player1.cardsInHand[action.id1];
+            s->player1.mana -= *item->cost;
             if(*item->cardType == GREEN_ITEM){                              // USE id1 ownBoardCreatureId
                 Card * target = &s->player1.creaturesInBoard[action.id2];
                 target->hasCharge = target->hasCharge || item->hasCharge;
@@ -433,6 +498,22 @@ public:
         return s;
     };
 
+    static State* nextPlayer(const State* initialState){
+        auto * s = new State(&initialState->player2, &initialState->player1);
+
+        for(auto & pair: s->player1.creaturesInBoard){
+            Card * c = &pair.second;
+            s->player1.creaturesInBoard[c->instanceId].canAttack = true;
+            s->player1.creaturesInBoard[c->instanceId].hasAttacked = false;
+        }
+
+        s->player1.handSize += 1 + s->player1.nextTurnDraw;
+        s->player1.nextTurnDraw = 0;
+        s->player1.mana = s->player1.maxMana + 1;
+
+        return s;
+    }
+
     static unordered_set<Action*> legalActions(const State* s){
         unordered_set<Action*> actions;
 
@@ -469,12 +550,14 @@ public:
         for(auto & pair: s->player1.creaturesInBoard){
             const Card * c = &pair.second;
 
+
             if(!c->canAttack || c->attack <= 0 || c->hasAttacked){
                 continue;
             }
 
             for(auto & targetPair: s->player2.creaturesInBoard){
                 const Card * target = &targetPair.second;
+
                 auto * a = new Action(ATTACK, c->instanceId, target->instanceId);
                 if(target->hasGuard){
                     guardAttacks.insert(a);
@@ -482,6 +565,8 @@ public:
                     otherAttacks.insert(a);
                 }
             }
+
+
 
             // Attack to opponent
             auto * a = new Action(ATTACK, c->instanceId, -1);
@@ -506,9 +591,33 @@ public:
         if(s->player1.health <= 0){
             return -1000 + s->player1.turn;
         }
-        int score = s->player1.health - 5*s->player2.health;
-        score += 4*(s->player1.creaturesInBoard.size() - s->player2.creaturesInBoard.size());
-        score += 3*(s->player1.handSize + s->player1.nextTurnDraw - s->player2.handSize - s->player2.nextTurnDraw);
+        int score = s->player1.health - 3*s->player2.health;
+
+        int p1BoardValue = 0;
+        int p2BoardValue = 0;
+        int p1HealthAndGuard = s->player1.health;
+        int p2TotalAttack = 0;
+
+
+        for(auto & pair: s->player1.creaturesInBoard){
+            const Card * creature = &pair.second;
+            p1BoardValue += creature->getBoardValue();
+            if(creature->hasGuard){
+                p1HealthAndGuard += creature->defense;
+            }
+        }
+        for(auto & pair: s->player2.creaturesInBoard){
+            const Card * creature = &pair.second;
+            p2BoardValue += creature->getBoardValue();
+            p2TotalAttack += creature->attack;
+        }
+        score += 6*(s->player1.creaturesInBoard.size() - s->player2.creaturesInBoard.size());
+        score += 2*(p1BoardValue - p2BoardValue);
+        score += 2*(s->player1.handSize + s->player1.nextTurnDraw - s->player2.handSize - s->player2.nextTurnDraw);
+        score += s->player2.creaturesInBoard.empty() ? 10 : 0;
+        score -= s->player1.creaturesInBoard.empty() ? 10 : 0;
+        score -= p2TotalAttack >= p1HealthAndGuard ? 100 : 0;
+
         return score;
     }
 
@@ -518,23 +627,34 @@ public:
         set<State *> statesToVisit;
         vector<Action *> solActions;
 
-        solTree.insert({++idCount, new PSol(idCount, 0, nullptr, StateManager::eval(initialState))});
+        solTree.insert({++idCount, new PSol(idCount, 0, new Action(3, 0, 0), StateManager::eval(initialState))});
         initialState->id = 1;
         statesToVisit.insert(initialState);
 
         State * stateVisiting;
+
         while(!statesToVisit.empty()){
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(high_resolution_clock::now() - start).count();
+            if(elapsed >= 90){
+                break;
+            }
             stateVisiting = *std::next(statesToVisit.begin(), 0);
             int idParent = stateVisiting->id;
+
             for(Action * action: StateManager::legalActions(stateVisiting)){
                 State * newState = StateManager::simulate(stateVisiting, *action);
-                int score = StateManager::eval(newState);
-                solTree.insert({++idCount, new PSol(idCount, idParent, action, score)});
+
+                idCount++;
+                int newScore = StateManager::eval(newState);
+                int parentScore = solTree[idParent]->score;
                 newState->id = idCount;
+
+                solTree.insert({idCount, new PSol(idCount, idParent, action, newScore)});
                 statesToVisit.insert(newState);
-                if(statesToVisit.size() > 200){
-                    statesToVisit.erase(std::next(statesToVisit.begin(), 200));
+                if(statesToVisit.size() > 300){
+                    statesToVisit.erase(std::next(statesToVisit.begin(), 300));
                 }
+
             }
             statesToVisit.erase(stateVisiting);
         }
@@ -548,7 +668,7 @@ public:
         PSol sol{};
         for(auto & pair: solTree){
             sol = *pair.second;
-            if(*bestSol < sol){
+            if(bestSol->score < sol.score){
                 *bestSol = sol;
             }
         }
@@ -557,7 +677,7 @@ public:
         while(keepLooking){
             solActions.push_back(bestSol->action);
             bestSol = solTree[bestSol->parentId];
-            if(bestSol->id == 1){
+            if(!bestSol || bestSol->id == 1){
                 keepLooking = false;
             }
         }
@@ -569,7 +689,7 @@ public:
 };
 
 bool State::operator < (const State & other) const{
-    return StateManager::eval(this) < StateManager::eval(&other);
+    return StateManager::eval(this) > StateManager::eval(&other);
 };
 
 // Given a creature, the best attack it can do ignoring allied creatures.
@@ -579,7 +699,7 @@ int bestAttack(Card* attackingCreature, Player* oppositePlayer){
     for( auto& pair : oppositePlayer->creaturesInBoard){
         Card* opCreature = &pair.second;
         if(attackingCreature->attack >= opCreature->defense && valueGain < opCreature->getPickValue() -
-                                                                                   attackingCreature->getPickValue()){
+                                                                           attackingCreature->getPickValue()){
             target = opCreature->instanceId;
             valueGain = opCreature->getPickValue() - attackingCreature->getPickValue();
         }
@@ -594,6 +714,7 @@ int bestAttack(Card* attackingCreature, Player* oppositePlayer){
 }
 
 void executeActions(vector<Action *> actions){
+
     for(Action * a: actions){
         if(a->actionType == SUMMON){
             cout << "SUMMON " << a->id1 << ";";
@@ -605,22 +726,45 @@ void executeActions(vector<Action *> actions){
             cout << "PASS";
         }
     }
+
     cout << endl;
 }
 
 // Pick between 3 cards based on the value of the cards.
 int bestPick(){
     int maxValue = -100;
-    int id = 0;
+    Card * selectedCard = {};
+    int selectedPick = 0;
     int cardNo = 0;
     for(Card* card: cardsToPick){
         if(card->getPickValue() > maxValue){
-            id = cardNo;
+            selectedCard = card;
+            selectedPick = cardNo;
             maxValue = card->getPickValue();
         }
         cardNo++;
     }
-    return id;
+
+    int cardCost = *selectedCard->cost >= 7 ? 7 : *selectedCard->cost;
+
+    if(*selectedCard->cardType == CREATURE){
+        creaturesCurve[cardCost]++;
+        if(selectedCard->hasLethal){
+            habilitiesCurve['L']++;
+        }else if(selectedCard->hasGuard){
+            habilitiesCurve['G']++;
+        }
+    }else{
+        itemsCurve[0]++;
+        if(*selectedCard->cardType == GREEN_ITEM){
+            itemsCurve[1]++;
+        }else if(*selectedCard->cardType == RED_ITEM){
+            itemsCurve[2]++;
+        }else{
+            itemsCurve[3]++;
+        }
+    }
+    return selectedPick;
 }
 
 unordered_set<Card*> selectCardsToPlay(Player* activePlayer){
@@ -672,20 +816,34 @@ void attackWithCreatures(Player *attackingPlayer){
 
 }
 
+/*
+ * For anyone trying to reuse contest code:
+ * First two input lines have an extra int on the end (card draw)
+ * Third line has an extra int on the end (number of opponent actions)
+ * Then there are is a line for each opponentaction - these are slightly awkward to parse if you aren't reading entire
+ *  lines in as they can have 3 or 4 fields.I'm just reading the entire line as a string and ignoring for now.
+ * After that all inputs are the same as the contest (number of cards, then lines of card details).
+ */
 void initializeState(int turn){
     for (int i = 0; i < 2; i++) {
         int playerHealth;
         int playerMana;
         int playerDeck;
         int playerRune;
-        cin >> playerHealth >> playerMana >> playerDeck >> playerRune; cin.ignore();
+        int cardDraw;
+        cin >> playerHealth >> playerMana >> playerDeck >> playerRune >> cardDraw; cin.ignore();
         players[i] = new Player(playerHealth, playerMana, playerDeck, playerRune, turn);
     }
     player1 = players[0];
     player2 = players[1];
     int opponentHand;
-    cin >> opponentHand; cin.ignore();
+    int opponentActions;
+    cin >> opponentHand >> opponentActions; cin.ignore();
     player2->handSize = opponentHand;
+    string opponentAction;
+    for (int i = 0; i< opponentActions; i++){
+        cin >> opponentAction;
+    }
     int cardCount;
     cin >> cardCount; cin.ignore();
     Card * cards[cardCount];
@@ -718,13 +876,40 @@ void initializeState(int turn){
 
 int main()
 {
-    int turn = 0;
+    pickValues.insert({{1, 4}, {2, 3}, {3, 6}, {4, 5}, {5, 4}, {6, 6}, {7, 6}, {8, 5}, {9, 6},
+                       {10, 4}, {11, 4}, {12, 3}, {13, 5}, {14, 3}, {15, 5.1}, {16, 4}, {17, 6}, {18, 9}, {19, 5},
+                       {20, 4}, {21, 6}, {22, 4}, {23, 6}, {24, 2}, {25, 3}, {26, 5}, {27, 5}, {28, 4}, {29, 4},
+                       {30, 5}, {31, 3}, {32, 5}, {33, 6}, {34, 4}, {35, 3}, {36, 6}, {37, 6}, {38, 3}, {39, 4},
+                       {40, 4}, {41, 5}, {42, 4}, {43, 5}, {44, 6}, {45, 4}, {46, 4}, {47, 3}, {48, 6}, {49, 6},
+                       {50, 4}, {51, 6}, {52, 5}, {53, 6}, {54, 6}, {55, 2}, {56, 3}, {57, 2}, {58, 3}, {59, 5},
+                       {60, 3}, {61, 5}, {62, 7}, {63, 3}, {64, 6}, {65, 7}, {66, 6}, {67, 7}, {68, 7}, {69, 7},
+                       {70, 5}, {71, 6}, {72, 5}, {73, 6}, {74, 4}, {75, 5}, {76, 6}, {77, 6}, {78, 4}, {79, 6},
+                       {80, 7}, {81, 6}, {82, 6}, {83, 5}, {84, 6}, {85, 3}, {86, 5}, {87, 4}, {88, 5}, {89, 3},
+                       {90, 3}, {91, 7}, {92, 2}, {93, 4}, {94, 4}, {95, 7}, {96, 5}, {97, 4}, {98, 5}, {99, 5},
+                       {100, 3}, {101, 5}, {102, 3}, {103, 6}, {104, 4}, {105, 4}, {106, 4}, {107, 3}, {108, 2}, {109, 5},
+                       {110, 3}, {111, 5}, {112, 4}, {113, 2}, {114, 6}, {115, 5}, {116, 5}, {117, 2}, {118, 2}, {119, 4},
+                       {120, 4}, {121, 3}, {122, 5}, {123, 5}, {124, 5}, {125, 4},{126, 4},{127, 3},{128, 6},{129, 4},
+                       {130, 5},{131, 2},{132, 3},{133, 7},{134, 4},{135, 4},{136, 3},{137, 4},{138, 2},{139, 7.1},
+                       {140, 3},{141, 5},{142, 2},{143, 2},{144, 8},{145, 3},{146, 4},{147, 5}, {148, 6},{149, 4},
+                       {150, 7.1},{151, 7}, {152, 2}, {153, 2}, {154, 3}, {155, 5}, {156, 4}, {157, 3}, {158, 6}, {159, 4},
+                       {160, 3}});
+
+    creaturesCurve.insert({{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0}});
+    itemsCurve.insert({{0,0},{1,0},{2,0},{3,0}});
+    minCreaturesCurve.insert({{0, 1}, {1, 4}, {2, 6}, {3, 5}, {4, 4}, {5, 3}, {6, 0}, {7, 2}});
+    maxCreaturesCurve.insert({{0, 2}, {1, 7}, {2, 8}, {3, 7}, {4, 6}, {5, 3}, {6, 2}, {7, 2}});
+    minItemsCurve.insert({{0, 6}, {1, 2}, {2, 2}, {3, 2}});
+    maxItemsCurve.insert({{0, 10}, {1, 4}, {2, 7}, {3, 4}});
+    habilitiesCurve.insert({{'B', 0},{'C', 0}, {'D', 0},{'G', 0}, {'L', 0},{'W',0}});
+    minHabilitiesCurve.insert({{'B', 0},{'C', 0}, {'D', 0},{'G', 4}, {'L', 2},{'W',0}});
+
+
+    turn = 0;
     State * nextState;
     State * initialState;
-    high_resolution_clock::time_point start;
-    high_resolution_clock::time_point finish;
     // game loop
     while (true) {
+        simsNo = 0;
         initializeState(turn);
         start = high_resolution_clock::now();
         initialState = new State(player1, player2);
@@ -732,11 +917,9 @@ int main()
         // test
 
         if(turn < 30){
-            // test
             for(Card* card: cardsToPick){
                 cerr << " value: " << card->getPickValue() << " ";
             }
-
             cerr << endl;
             pick(bestPick());
             end();
@@ -747,7 +930,8 @@ int main()
         finish = high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count();
 
-        cerr << "** Time: " << elapsed << endl;
+        cerr << endl << "** Time: " << elapsed << " Sims: " << simsNo << endl;
+
         turn++;
     }
 }
