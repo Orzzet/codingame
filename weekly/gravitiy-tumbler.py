@@ -28,9 +28,9 @@ def tumble(tower: np.ndarray):
             else:
                 # Si está ocupado y hay espacios libres en la columna, se realizan 3 operaciones
                 if len(empty_spaces[col]) > 0:
-                    # 1 - Se pone el espacio actual a 0
+                    # 1 - Se pone el espacio actual a "."
                     new_tower[row][col] = "."
-                    # 2 - Se obtiene el primer espacio libre de la columna, se quita de la lista y se pone a 1
+                    # 2 - Se obtiene el primer espacio libre de la columna, se quita de la lista y se pone a "#"
                     empty_row, empty_col = empty_spaces[col].pop(0)
                     new_tower[empty_row, empty_col] = "#"
                     # 3 - Se añade el espacio actual a espacios libres de la columna
