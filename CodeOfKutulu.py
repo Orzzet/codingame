@@ -201,28 +201,28 @@ class Board:
         left_walled = False
 
         steps = 0
-        while top_walled and right_walled and bot_walled and left_walled == False:
+        while not (top_walled and right_walled and bot_walled and left_walled):
             steps += 1
             top = (origen[0] + steps, origen[1])
             right = (origen[0], origen[1] + steps)
             bot = (origen[0] - steps, origen[1])
             left = (origen[0], origen[1] - steps)
-            if not top_walled and top in board.walkable:
+            if not top_walled and top in self.walkable:
                 cells.add(top)
             else:
                 top_walled = True
 
-            if not right_walled and right in board.walkable:
+            if not right_walled and right in self.walkable:
                 cells.add(right)
             else:
                 right_walled = True
 
-            if not bot_walled and bot in board.walkable:
+            if not bot_walled and bot in self.walkable:
                 cells.add(bot)
             else:
                 bot_walled = True
 
-            if not left_walled and left in board.walkable:
+            if not left_walled and left in self.walkable:
                 cells.add(left)
             else:
                 left_walled = True
