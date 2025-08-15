@@ -661,7 +661,7 @@ class Units:
     enemyArchers: 'List[Unit]' = []
     enemyGiants: 'List[Unit]' = []
 
-    enemyKnihtsPos: 'np.ndarray' = np.array([], int)
+    enemyKnightsPos: 'np.ndarray' = np.array([], int)
     myQueenPos: 'np.ndarray' = np.array([], int)
 
     _stored_biggest_threat: 'Unit' = None
@@ -682,7 +682,7 @@ class Units:
         cls.enemyArchers = []
         cls.enemyGiants = []
 
-        cls.enemyKnihtsPos: 'np.ndarray' = np.array([], int)
+        cls.enemyKnightsPos: 'np.ndarray' = np.array([], int)
         cls.myQueenPos: 'np.ndarray' = np.array([], int)
 
         cls._stored_biggest_threat: 'Unit' = None
@@ -719,11 +719,11 @@ class Units:
 
                 if unit.unit_type == 0:  # Knights
                     cls.enemyKnights.append(unit)
-                    if cls.enemyKnihtsPos.size <= 0:
-                        cls.enemyKnihtsPos = np.hstack((cls.enemyKnihtsPos, np.array(unit.pos)))
+                    if cls.enemyKnightsPos.size <= 0:
+                        cls.enemyKnightsPos = np.hstack((cls.enemyKnightsPos, np.array(unit.pos)))
                         cls.myQueenPos = np.hstack((cls.myQueenPos, np.array(Units.alliedQueen.pos)))
                     else:
-                        cls.enemyKnihtsPos = np.vstack((cls.enemyKnihtsPos, np.array(unit.pos)))
+                        cls.enemyKnightsPos = np.vstack((cls.enemyKnightsPos, np.array(unit.pos)))
                         cls.myQueenPos = np.vstack((cls.myQueenPos, np.array(Units.alliedQueen.pos)))
 
                 elif unit.unit_type == 1:  # Archer
@@ -1108,7 +1108,7 @@ class State:
         s.units = Units.units
         s.sites = Sites.sites
         s.my_queen = Unit(Units.alliedQueen.pos[0], Units.alliedQueen.pos[1], Units.alliedQueen.owner, Units.alliedQueen.unit_type, Units.alliedQueen.health)
-        s.en_knights_pos = np.copy(Units.enemyKnihtsPos)
+        s.en_knights_pos = np.copy(Units.enemyKnightsPos)
         s.my_gold = Strategy.myGold
         s.en_queen = Units.enemyQueen
         return s
