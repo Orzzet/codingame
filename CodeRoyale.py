@@ -743,12 +743,15 @@ class Units:
     def biggest_threat_to_queen() -> 'Optional[Unit]':
         close_knights = Units.closer(Units.enemyKnights, Units.alliedQueen.pos, 350)
         if close_knights:
-            return close_knights[0]
-        else:
-            return None
-        threats = [knight for knight in close_knights if knight.turns_until_death() > knight.turns_to_reach_opposite_queen()]
-        if len(threats) > 0:
-            Units._stored_biggest_threat = min(threats, key=lambda k: k.threat_level())
+            threats = [
+                knight
+                for knight in close_knights
+                if knight.turns_until_death() > knight.turns_to_reach_opposite_queen()
+            ]
+            if len(threats) > 0:
+                Units._stored_biggest_threat = min(threats, key=lambda k: k.threat_level())
+            else:
+                Units._stored_biggest_threat = None
         else:
             Units._stored_biggest_threat = None
         return Units._stored_biggest_threat
